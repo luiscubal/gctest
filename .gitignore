@@ -1,0 +1,9 @@
+.settings/
+
+Debug/
+Release/
+*~
+
+*.o
+
+*.exe
