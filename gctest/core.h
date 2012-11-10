@@ -65,8 +65,17 @@ struct gc_heap {
 	void free_non_gc_object(void* obj, size_t size);
 	inline bool contains(void* obj, bool is_gc_object) const {
 		if(obj >= heap_aligned && obj < heap_aligned + heap_size) {
+			if (uintptr_t((char*) obj - heap_aligned) % HEAP_UNIT_SIZE != 0) {
+				//Not aligned - invalid
+				return false;
+			}
 			uintptr_t block_num = uintptr_t((char*) obj - heap_aligned) / HEAP_UNIT_SIZE;
-			return !is_gc_object || heap_starts[block_num];
+			if (is_gc_object) {
+				return heap_starts[block_num];
+			}
+			else {
+				return true;
+			}
 		}
 
 		return false;
