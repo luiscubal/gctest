@@ -2,19 +2,29 @@
 #include "utils.h"
 #include <iostream>
 #include <utility>
+#include <cstdlib>
 #include <cstring>
 
 using std::cout;
 using std::cerr;
 using std::endl;
 using std::queue;
-using std::strcmp;
+using std::string;
+using std::malloc;
+using std::memset;
 
 gc_context::gc_context(void* stack_start) : stack_start(stack_start),
 		last_mark_id(0),
 		last_alloc_heap(0),
 		first_heap((char*) UINTPTR_MAX),
-		last_heap(nullptr) {}
+		last_heap(nullptr) {
+
+	for (size_t i = 0; i <= LAST_PRIMITIVE_TYPE; ++i) {
+		primitive_types[i].type_category = type_category_t(i);
+		primitive_types[i].array_type = nullptr;
+	}
+
+}
 
 size_t gc_context::full_compute_class_size(class_type* cls) {
 	size_t size;
@@ -31,22 +41,26 @@ size_t gc_context::full_compute_class_size(class_type* cls) {
 			continue;
 		}
 
-		field.field_offset = size;
-		if (field.type[0] == '[') {
+		switch (field.type->type_category) {
+		case TYPE_ARRAY:
 			size = align(size, sizeof(void*));
+			field.field_offset = size;
 			size += sizeof(void*);
-		}
-		else if (field.type[0] == 'L') {
+			break;
+		case TYPE_CLASS_OBJECT:
 			size = align(size, sizeof(void*));
+			field.field_offset = size;
 			size += sizeof(void*);
-		}
-		else if (field.type[0] == 'I') {
+			break;
+		case TYPE_INT32:
 			size = align(size, sizeof(uint32_t));
+			field.field_offset = size;
 			size += sizeof(uint32_t);
-		}
-		else {
+			break;
+		default:
 			cerr << "Unrecognized field type " << field.type << endl;
 			abort();
+			break;
 		}
 	}
 
@@ -59,9 +73,49 @@ void gc_context::compute_sizes() {
 	}
 }
 
-class_type* gc_context::class_by_name(const char* class_name, size_t len) {
+size_t gc_context::full_compute_class_static_size(class_type* cls) {
+	size_t size = 0;
+
+	for (field& field : cls->fields) {
+		if (!field.flags.is_static) {
+			continue;
+		}
+
+		switch (field.type->type_category) {
+		case TYPE_ARRAY:
+			size = align(size, sizeof(void*));
+			field.field_offset = size;
+			size += sizeof(void*);
+			break;
+		case TYPE_CLASS_OBJECT:
+			size = align(size, sizeof(void*));
+			field.field_offset = size;
+			size += sizeof(void*);
+			break;
+		case TYPE_INT32:
+			size = align(size, sizeof(uint32_t));
+			field.field_offset = size;
+			size += sizeof(uint32_t);
+			break;
+		default:
+			cerr << "Unrecognized field type " << field.type << endl;
+			abort();
+			break;
+		}
+	}
+
+	return size;
+}
+
+void gc_context::compute_static_sizes() {
 	for (class_type* cls : class_types) {
-		if (strncmp(cls->full_name, class_name, len) == 0) {
+		cls->static_size = full_compute_class_static_size(cls);
+	}
+}
+
+class_type* gc_context::class_by_name(string class_name) {
+	for (class_type* cls : class_types) {
+		if (cls->full_name == class_name) {
 			return cls;
 		}
 	}
@@ -70,9 +124,9 @@ class_type* gc_context::class_by_name(const char* class_name, size_t len) {
 	abort();
 }
 
-const class_type* gc_context::class_by_name(const char* class_name, size_t len) const {
+const class_type* gc_context::class_by_name(string class_name) const {
 	for (const class_type* cls : class_types) {
-		if (strncmp(cls->full_name, class_name, len) == 0) {
+		if (cls->full_name == class_name) {
 			return cls;
 		}
 	}
@@ -81,33 +135,27 @@ const class_type* gc_context::class_by_name(const char* class_name, size_t len) 
 	abort();
 }
 
-size_t gc_context::measure_class_size(const char* class_name, size_t len) const {
-	return class_by_name(class_name, len)->computed_size;
+size_t gc_context::measure_class_size(type_info* type) const {
+	return ((class_type_info*) type)->cls->computed_size;
 }
 
-size_t gc_context::measure_direct_heap_size(const char* type_name) const {
-	switch (type_name[0]) {
-	case 'L': return sizeof(core_representation);
-	case '[': return sizeof(array_representation);
-	case 'I': return sizeof(uint32_t);
+size_t gc_context::measure_direct_heap_size(type_info* type) const {
+	switch (type->type_category) {
+	case TYPE_CLASS_OBJECT: return sizeof(core_representation);
+	case TYPE_ARRAY: return sizeof(array_representation);
+	case TYPE_INT32: return sizeof(uint32_t);
 	}
 
-	cerr << "measure_direct_heap_size Unrecognized type " << type_name << endl;
+	cerr << "measure_direct_heap_size Unrecognized type " << type->type_category << endl;
 	abort();
 }
 
-size_t gc_context::measure_array_content_size(const char* content_type, size_t len) const {
+size_t gc_context::measure_array_content_size(type_info* content_type, size_t len) const {
 	return len * measure_direct_heap_size(content_type);
 }
 
-core_representation* gc_context::alloc_class(const char* type) {
-	//cout << "Allocate class " << type << endl;
-
-	const char* class_name = type + 1;
-	const char* semicolon_pos = strchr(class_name, ';');
-	size_t len = semicolon_pos - class_name;
-
-	class_type* cls = class_by_name(class_name, len);
+core_representation* gc_context::alloc_class(type_info* type) {
+	class_type* cls = ((class_type_info*) type)->cls;
 
 	size_t class_size = cls->computed_size;
 
@@ -119,16 +167,14 @@ core_representation* gc_context::alloc_class(const char* type) {
 	return repr;
 }
 
-array_representation* gc_context::alloc_array(const char* type, size_t length) {
-	const char* content_type = type + 1;
-
+array_representation* gc_context::alloc_array(type_info* content_type, size_t length) {
 	size_t content_size = measure_array_content_size(content_type, length);
 	void* content = alloc(content_size, false);
 
 	array_representation* repr = (array_representation*) alloc(sizeof(array_representation), true);
 	repr->array_length = length;
 	repr->content = content;
-	repr->core.type = type;
+	repr->core.type = get_type_array(content_type);
 	repr->core.last_mark = last_mark_id;
 
 	return repr;
@@ -144,6 +190,7 @@ void gc_context::log_headers() {
 			cout << "no base_type" << endl;
 		}
 		cout << "computed_size=" << cls->computed_size << endl;
+		cout << "static_size=" << cls->static_size << endl;
 		cout << endl;
 	}
 }
@@ -255,14 +302,28 @@ void gc_context::mark() {
 	queue<core_representation*> objects_to_mark;
 
 	//Mark stack
-	for (uintptr_t pos = stack_pos; pos < uintptr_t(stack_start); pos += sizeof(void*)) {
-		void* value_at = *((void**) pos);
+	//Note that stack_pos is the start because the stack grows downwards.
+	mark_conservative_region(stack_pos, uintptr_t(stack_start), objects_to_mark);
 
-		//cout << "Found " << value_at << ": ";
+	//Mark static fields
+	for (class_type* cls : class_types) {
+		if (cls->static_size == 0) {
+			continue;
+		}
 
-		if (is_heap_object(value_at)) {
-			//cout << "Heap object" << endl;
-			objects_to_mark.push((core_representation*) value_at);
+		for (field& field : cls->fields) {
+			if (!field.flags.is_static) {
+				continue;
+			}
+			if (field.type->type_category == TYPE_ARRAY ||
+					field.type->type_category == TYPE_CLASS_OBJECT) {
+
+				char* ptr = (char*) cls->static_field_data + field.field_offset;
+
+				core_representation** reprptr = (core_representation**) ptr;
+				core_representation* repr = *reprptr;
+				repr->last_mark = last_mark_id;
+			}
 		}
 	}
 
@@ -272,6 +333,22 @@ void gc_context::mark() {
 	}
 }
 
+void gc_context::mark_conservative_region(uint32_t start, uint32_t end,
+		std::queue<core_representation*>& pending_list) {
+
+	for (uintptr_t pos = start; pos < end; pos += sizeof(void*)) {
+		void* value_at = *((void**) pos);
+
+		//cout << "Found " << value_at << ": ";
+
+		if (is_heap_object(value_at)) {
+			//cout << "Heap object" << endl;
+			pending_list.push((core_representation*) value_at);
+		}
+	}
+
+}
+
 void gc_context::mark(core_representation* object, queue<core_representation*>& pending_list) {
 	if (object->last_mark == last_mark_id) {
 		return;
@@ -279,16 +356,13 @@ void gc_context::mark(core_representation* object, queue<core_representation*>& 
 
 	object->last_mark = last_mark_id;
 
-	if (object->type[0] == 'L') {
-		const char* name_begin = object->type + 1;
-		const char* semicolon_position = strchr(name_begin, ';');
-		size_t len = semicolon_position - name_begin;
-		const class_type* cls = class_by_name(name_begin, len);
+	if (object->type->type_category == TYPE_CLASS_OBJECT) {
+		const class_type* cls = ((class_type_info*) object->type)->cls;
 
 		mark_fields(cls, object, pending_list);
 	}
-	else if (object->type[0] == '[') {
-		const char* content_type = object->type + 1;
+	else if (object->type->type_category == TYPE_ARRAY) {
+		type_info* content_type = ((array_type_info*) object->type)->content_type;
 
 		mark_array(content_type, object, pending_list);
 	}
@@ -307,7 +381,7 @@ void gc_context::mark_fields(const class_type* cls, core_representation* object,
 
 void gc_context::mark_field(const field& field, core_representation* object,
 		queue<core_representation*>& pending_list) {
-	if (field.type[0] == 'L' || field.type[0] == '[') {
+	if (field.type->type_category == TYPE_ARRAY || field.type->type_category == TYPE_CLASS_OBJECT) {
 		core_representation* location =
 				*((core_representation**) ((char*) object + field.field_offset));
 
@@ -319,24 +393,26 @@ void gc_context::mark_field(const field& field, core_representation* object,
 	}
 }
 
-void gc_context::mark_array(const char* content_type, core_representation* object,
+void gc_context::mark_array(const type_info* content_type, core_representation* object,
 		queue<core_representation*>& pending_list) {
 
 	array_representation* array = (array_representation*) object;
 	void* content = array->content;
 
-	switch (content_type[0]) {
-	case 'L':
+	switch (content_type->type_category) {
+	case TYPE_CLASS_OBJECT:
 		for (size_t i = 0; i < array->array_length; ++i) {
 			pending_list.push(((core_representation**) content)[i]);
 		}
 		break;
-	case '[':
+	case TYPE_ARRAY:
 		for (size_t i = 0; i < array->array_length; ++i) {
 			pending_list.push((core_representation*) ((array_representation**) content)[i]);
 		}
 		break;
+	default:
 		//For the remaining types, we don't even bother checking for them.
+		break;
 	}
 }
 
@@ -344,8 +420,9 @@ void gc_context::sweep() {
 	//cout << "sweep " << (int) last_mark_id << endl;
 
 	for (gc_heap& heap : heaps) {
-		for (size_t i = 0; i < heap.heap_starts.size(); ++i) {
-			if (!heap.heap_starts[i]) {
+		for (size_t i = heap.heap_starts.find_next_unset(0, heap.heap_starts.size());
+				i < heap.heap_starts.size(); ++i) {
+			if (!heap.heap_starts.get(i)) {
 				continue;
 			}
 
@@ -355,25 +432,24 @@ void gc_context::sweep() {
 
 			if (repr->last_mark != last_mark_id) {
 				//Free this object
-				heap.heap_starts[i] = 0;
+				heap.heap_starts.unset(i);
 
 				size_t object_size;
 
-				if (repr->type[0] == '[') {
+				if (repr->type->type_category == TYPE_ARRAY) {
 					object_size = sizeof(array_representation);
 					array_representation* arepr = (array_representation*) repr;
-					size_t content_size = measure_array_content_size(repr->type + 1, arepr->array_length);
+					array_type_info* type_as_array = (array_type_info*) repr->type;
+					size_t content_size = measure_array_content_size(type_as_array->content_type, arepr->array_length);
 
 					gc_heap* owner_heap = find_owner_heap(arepr->content, false);
 
 					owner_heap->free_non_gc_object(arepr->content, content_size);
 				}
-				else if (repr->type[0] == 'L') {
-					const char* class_name = repr->type + 1;
-					const char* semicolon_position = strchr(class_name, ';');
-					size_t len = semicolon_position - class_name;
+				else if (repr->type->type_category == TYPE_CLASS_OBJECT) {
+					class_type* cls = ((class_type_info*) repr->type)->cls;
 
-					object_size = class_by_name(class_name, len)->computed_size;
+					object_size = cls->computed_size;
 				}
 				else {
 					cerr << "sweep Unrecognized type " << repr->type << endl;
@@ -383,6 +459,51 @@ void gc_context::sweep() {
 				size_t block_size = div_round_up(object_size, HEAP_UNIT_SIZE);
 				heap.heap_bitset.unset_range(i, block_size);
 			}
+		}
+	}
+}
+
+type_info* gc_context::get_type_int32() {
+	return &(primitive_types[TYPE_INT32]);
+}
+
+type_info* gc_context::get_type_array(type_info* base_type) {
+	if (base_type->array_type) {
+		return base_type->array_type;
+	}
+
+	array_type_info* type = (array_type_info*) malloc(sizeof(array_type_info));
+
+	type->base_type.type_category = TYPE_ARRAY;
+	type->base_type.array_type = nullptr;
+	type->content_type = base_type;
+
+	base_type->array_type = (type_info*) type;
+
+	return (type_info*) type;
+}
+
+type_info* gc_context::get_class_type(class_type* cls) {
+	if (cls->owned_type) {
+		return cls->owned_type;
+	}
+
+	class_type_info* type = (class_type_info*) malloc(sizeof(class_type_info));
+
+	type->base_type.type_category = TYPE_CLASS_OBJECT;
+	type->base_type.array_type = nullptr;
+	type->cls = cls;
+
+	cls->owned_type = (type_info*) type;
+
+	return (type_info*) type;
+}
+
+void gc_context::prepare_static_fields() {
+	for (class_type* cls : class_types) {
+		if (cls->static_size > 0) {
+			cls->static_field_data = alloc(cls->static_size, false);
+			memset(cls->static_field_data, 0, cls->static_size);
 		}
 	}
 }

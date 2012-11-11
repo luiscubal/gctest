@@ -59,11 +59,9 @@ void* gc_heap::try_alloc(size_t size, bool is_gc_object) {
 			size_t block_size = i - block_start + 1;
 			if (block_size * HEAP_UNIT_SIZE >= size) {
 				if (is_gc_object) {
-					heap_starts[block_start] = true;
+					heap_starts.set(block_start);
 				}
-				for (size_t j = block_start; j <= i; ++j) {
-					heap_bitset.set(j);
-				}
+				heap_bitset.set_range(block_start, block_size);
 				return heap_aligned + block_start * HEAP_UNIT_SIZE;
 			}
 		}
@@ -72,7 +70,9 @@ void* gc_heap::try_alloc(size_t size, bool is_gc_object) {
 			block_start = i;
 			if (HEAP_UNIT_SIZE >= size) {
 				heap_bitset.set(i);
-				heap_starts[i] = true;
+				if (is_gc_object) {
+					heap_starts.set(i);
+				}
 				return heap_aligned + block_start * HEAP_UNIT_SIZE;
 			}
 		}
