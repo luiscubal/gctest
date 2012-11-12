@@ -15,6 +15,11 @@ The GC is only run on allocation. If there's no lack of memory, then the GC will
 
 The "gc_heap" are pages of heap memory that are used to store the objects, arrays and array contents.
 
+Description
+===========
+
+A (not-so-brief) description of this project can be seen at http://luiscubal.blogspot.pt/2012/11/a-simple-mark-garbage-collector.html
+
 The code is licensed under the MIT license.
 
 Copyright (C) 2012 Luís Reis <luiscubal@gmail.com>
