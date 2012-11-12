@@ -34,6 +34,16 @@ gc_heap::gc_heap(gc_heap&& other) : heap_size(other.heap_size), heap(other.heap)
 	heap_starts = move(other.heap_starts);
 }
 
+gc_heap& gc_heap::operator =(const gc_heap& other) {
+	heap_size = other.heap_size;
+	heap = other.heap;
+	heap_aligned = other.heap_aligned;
+	heap_bitset = other.heap_bitset;
+	heap_starts = other.heap_starts;
+
+	return *this;
+}
+
 gc_heap::~gc_heap() {
 	if (heap) {
 		free(heap);
@@ -46,16 +56,17 @@ void* gc_heap::try_alloc(size_t size, bool is_gc_object) {
 		return nullptr;
 	}
 
-	ssize_t block_start = -1;
+	bool block_started = false;
+	size_t block_start = 0;
 
 	for (size_t i = heap_bitset.find_next_unset(0, heap_bitset.size()); i < heap_bitset.size();) {
 		if (heap_bitset.get(i)) {
-			block_start = -1;
+			block_started = false;
 			i = heap_bitset.find_next_unset(i + 1, heap_bitset.size());
 			continue;
 		}
 
-		if (block_start != -1) {
+		if (block_started) {
 			size_t block_size = i - block_start + 1;
 			if (block_size * HEAP_UNIT_SIZE >= size) {
 				if (is_gc_object) {
@@ -68,6 +79,7 @@ void* gc_heap::try_alloc(size_t size, bool is_gc_object) {
 		else {
 			//cout << "Free block starting at " << i << endl;
 			block_start = i;
+			block_started = true;
 			if (HEAP_UNIT_SIZE >= size) {
 				heap_bitset.set(i);
 				if (is_gc_object) {

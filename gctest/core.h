@@ -6,7 +6,15 @@
 #include <string>
 #include <queue>
 #include "fast_bitset.h"
+#ifdef PLATFORM_X64
 #include "x86_64.h"
+#else
+#ifdef PLATFORM_X86
+#include "x86.h"
+#else
+#error "No platform defined"
+#endif
+#endif
 
 typedef uint8_t mark_id_t;
 typedef uint8_t fixed_count_t;
@@ -106,7 +114,7 @@ struct gc_heap {
 		return false;
 	}
 
-	gc_heap& operator=(const gc_heap& other) = delete;
+	gc_heap& operator=(const gc_heap& other);
 };
 
 class gc_context {
