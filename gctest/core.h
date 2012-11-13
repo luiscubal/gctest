@@ -5,6 +5,7 @@
 #include <vector>
 #include <string>
 #include <queue>
+#include <memory>
 #include "fast_bitset.h"
 #ifdef PLATFORM_X64
 #include "x86_64.h"
@@ -18,6 +19,7 @@
 
 typedef uint8_t mark_id_t;
 typedef uint8_t fixed_count_t;
+typedef void (*func_ptr)();
 
 #define PREFERRED_HEAP_SIZE 0x1000
 #define HEAP_UNIT_SIZE sizeof(core_representation)
@@ -48,17 +50,40 @@ struct field {
 	size_t field_offset;
 };
 
+struct method_flags {
+	unsigned is_public : 1;
+	unsigned is_static : 1;
+	unsigned is_virtual : 1;
+};
+
+struct method {
+	//Shall define only completely newly declared methods, not overridden methods.
+
+	type_info* return_type;
+	std::vector<type_info*> arguments;
+	method_flags flags;
+
+	/**
+	 * Only has meaning if flags.is_virtual is set to true.
+	 * The memory offset of the function pointer in the core_representation type.
+	 * The virtual method equivalent of field.field_offset
+	 */
+	size_t virtual_offset;
+};
+
 struct class_type {
 	std::string full_name;
 	class_type* base_type; //NULL for no base
 	size_t computed_size;
 	size_t static_size;
 	std::vector<field> fields;
+	std::vector<method> methods;
 	type_info* owned_type;
 	void* static_field_data;
 };
 
 typedef enum {
+	TYPE_VOID,
 	TYPE_INT32,
 
 	LAST_PRIMITIVE_TYPE = TYPE_INT32,
@@ -117,10 +142,39 @@ struct gc_heap {
 	gc_heap& operator=(const gc_heap& other);
 };
 
-class gc_context {
+struct gc_type_store {
 	type_info primitive_types[LAST_PRIMITIVE_TYPE + 1];
-	void* stack_start;
 	std::vector<class_type*> class_types;
+
+	friend class gc_context;
+public:
+	gc_type_store();
+
+	void push_class_type(class_type* type) { class_types.push_back(type); }
+
+	type_info* get_type_void();
+	type_info* get_type_int32();
+	type_info* get_type_array(type_info* base_type);
+	type_info* get_class_type(class_type* cls);
+
+	size_t full_compute_class_size(class_type* cls);
+	size_t full_compute_class_static_size(class_type* cls);
+	void compute_sizes();
+	void compute_static_sizes();
+
+	class_type* class_by_name(std::string class_name);
+	const class_type* class_by_name(std::string class_name) const;
+
+	size_t measure_class_size(type_info* type) const;
+	size_t measure_direct_heap_size(type_info* type) const;
+	size_t measure_array_content_size(type_info* content_type, size_t len) const;
+
+	void log_headers();
+};
+
+class gc_context {
+	std::unique_ptr<gc_type_store> type_store;
+	void* stack_start;
 	std::vector<gc_heap> heaps;
 	mark_id_t last_mark_id;
 	size_t last_alloc_heap;
@@ -139,24 +193,11 @@ class gc_context {
 			std::queue<core_representation*>& pending_list);
 	void sweep();
 public:
-	gc_context(void* stack_start);
+	gc_context(std::unique_ptr<gc_type_store> type_store, void* stack_start);
 
-	void push_class_type(class_type* type) { class_types.push_back(type); }
 	size_t count_heaps() { return heaps.size(); }
 	gc_heap* find_owner_heap(void* content_location, bool is_gc_object);
 	const gc_heap* find_owner_heap(void* content_location, bool is_gc_object) const;
-
-	size_t full_compute_class_size(class_type* cls);
-	size_t full_compute_class_static_size(class_type* cls);
-	void compute_sizes();
-	void compute_static_sizes();
-
-	class_type* class_by_name(std::string class_name);
-	const class_type* class_by_name(std::string class_name) const;
-
-	size_t measure_class_size(type_info* type) const;
-	size_t measure_direct_heap_size(type_info* type) const;
-	size_t measure_array_content_size(type_info* content_type, size_t len) const;
 
 	core_representation* alloc_class(type_info* class_type);
 	array_representation* alloc_array(type_info* inner_type, size_t length);
@@ -171,12 +212,6 @@ public:
 	void prepare_static_fields();
 
 	void perform_gc();
-
-	void log_headers();
-
-	type_info* get_type_int32();
-	type_info* get_type_array(type_info* base_type);
-	type_info* get_class_type(class_type* cls);
 };
 
 #endif /* CORE_H_ */
