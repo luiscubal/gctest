@@ -21,7 +21,7 @@ void test_linked_list() {
 
 	void* e1 = 0;
 
-	for (int i = 0; i < 1000; ++i) {
+	for (int i = 0; i < 100; ++i) {
 		void* first = 0;
 		void* prev = 0;
 		for (int j = 0; j < 15000; ++j) {
@@ -58,7 +58,7 @@ void test_linked_list() {
 
 void test_array() {
 	array_representation* first = nullptr;
-	for (int i = 0; i < 10000; ++i) {
+	for (int i = 0; i < 5000; ++i) {
 		array_representation* array = ctx->alloc_array(type_store->get_type_int32(), 50000);
 		if (!first) {
 			first = array;
@@ -113,9 +113,70 @@ void test_statics(bool check_old) {
 	*val = 123;
 }
 
-void run_main(void* args) {
+void thread2(void* data) {
+	class_type* cls = type_store->class_by_name("core.Link");
+	type_info* cls_type = type_store->get_class_type(cls);
 
-	class_type core_Link;
+	const field& fval = cls->fields[2];
+	size_t oval = fval.field_offset;
+
+	core_representation* node = (core_representation*) data;
+
+	uint32_t& val = *((uint32_t*) ((char*) node + oval));
+	//cout << "Alternative thread " << val << endl;
+
+	val += 123;
+
+	core_representation* newnode = ctx->alloc_class(cls_type);
+	uint32_t& val2 = *((uint32_t*) ((char*) newnode + oval));
+
+	val2 = val;
+}
+
+void test_threading() {
+	class_type* cls = type_store->class_by_name("core.Link");
+	type_info* cls_type = type_store->get_class_type(cls);
+
+	const field& fval = cls->fields[2];
+	size_t oval = fval.field_offset;
+
+	void* first_node = nullptr;
+	void* second_node = nullptr;
+
+	thread_identifier threads[1000];
+
+	for (int i = 0; i < 1000; ++i) {
+		void* node = ctx->alloc_class(cls_type);
+		if (!first_node) {
+			first_node = node;
+		}
+		else if (!second_node) {
+			second_node = node;
+		}
+
+		*((uint32_t*) ((char*) node + oval)) = i;
+		threads[i] = start_thread(ctx, node, thread2);
+	}
+
+	if (*((uint32_t*) ((char*) first_node + oval)) != 123) {
+		cerr << "WRONG RESULT. Expected 123" << endl;
+	}
+
+	if (*((uint32_t*) ((char*) second_node + oval)) != 124) {
+		cerr << "WRONG RESULT. Expected 124" << endl;
+	}
+
+	for (int i = 0; i < 1000; ++i) {
+		join_thread(threads[i]);
+		dereference_thread(threads[i]);
+	}
+}
+
+void run_main(void*) {
+
+	cls_coreLink = new class_type();
+
+	class_type& core_Link = *cls_coreLink;
 	core_Link.full_name = "core.Link";
 	core_Link.base_type = 0;
 	core_Link.owned_type = nullptr;
@@ -162,8 +223,10 @@ void run_main(void* args) {
 	test_array();
 	cout << "More statics" << endl;
 	test_statics(true);
+	cout << "Test threading" << endl;
+	test_threading();
 
-	cout << ctx->count_heaps() << endl;
+	cout << "HEAPS: " << ctx->count_heaps() << endl;
 
 	cout.flush();
 	cerr.flush();
@@ -171,7 +234,7 @@ void run_main(void* args) {
 
 int main() {
 	type_store = new gc_type_store();
-	ctx = new gc_context(std::unique_ptr<gc_type_store>(type_store));
+	ctx = new gc_context(type_store);
 
 	declare_thread(ctx, NULL, run_main);
 

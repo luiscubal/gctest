@@ -5,7 +5,6 @@
 #include <vector>
 #include <string>
 #include <queue>
-#include <memory>
 #include "threading.h"
 #include "fast_bitset.h"
 
@@ -138,7 +137,13 @@ struct gc_type_store {
 	type_info primitive_types[LAST_PRIMITIVE_TYPE + 1];
 	std::vector<class_type*> class_types;
 
+	Mutex mutex;
+
 	friend class gc_context;
+
+	size_t measure_class_size(type_info* type) const;
+	size_t measure_direct_heap_size(type_info* type) const;
+	size_t measure_array_content_size(type_info* content_type, size_t len) const;
 public:
 	gc_type_store();
 
@@ -157,15 +162,13 @@ public:
 	class_type* class_by_name(std::string class_name);
 	const class_type* class_by_name(std::string class_name) const;
 
-	size_t measure_class_size(type_info* type) const;
-	size_t measure_direct_heap_size(type_info* type) const;
-	size_t measure_array_content_size(type_info* content_type, size_t len) const;
-
 	void log_headers();
+
+	Lock lock();
 };
 
 class gc_context {
-	std::unique_ptr<gc_type_store> type_store;
+	gc_type_store* type_store;
 	std::vector<gc_heap> heaps;
 	std::vector<thread_identifier> threads;
 	std::vector<void*> thread_stack_starts;
@@ -173,10 +176,10 @@ class gc_context {
 	size_t last_alloc_heap;
 	char* first_heap;
 	char* last_heap;
-	Mutex mutex;
 
 	void mark();
 	void mark_thread_objects(std::queue<core_representation*>& pending_list);
+	void mark_registers(thread_identifier thread, std::queue<core_representation*>& pending_list);
 	void mark_conservative_region(uint32_t start, uint32_t end,
 			std::queue<core_representation*>& pending_list);
 	void mark(core_representation* object, std::queue<core_representation*>& pending_list);
@@ -193,9 +196,9 @@ class gc_context {
 
 	void perform_gc();
 public:
-	gc_context(std::unique_ptr<gc_type_store> type_store);
+	gc_context(gc_type_store* type_store);
 
-	size_t count_heaps() { return heaps.size(); }
+	size_t count_heaps() { Lock mlock = lock(); return heaps.size(); }
 	gc_heap* find_owner_heap(void* content_location, bool is_gc_object);
 	const gc_heap* find_owner_heap(void* content_location, bool is_gc_object) const;
 
@@ -210,7 +213,7 @@ public:
 
 	void force_gc();
 
-	Lock lock();
+	Lock lock() { return type_store->lock(); }
 
 	void declare_thread(thread_identifier thread, void* stack_start);
 	void forget_thread(thread_identifier thread);

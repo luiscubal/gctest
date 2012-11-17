@@ -30,6 +30,8 @@ type_info* gc_type_store::get_type_array(type_info* base_type) {
 		return base_type->array_type;
 	}
 
+	Lock mlock = lock();
+
 	array_type_info* type = (array_type_info*) malloc(sizeof(array_type_info));
 
 	type->base_type.type_category = TYPE_ARRAY;
@@ -45,6 +47,8 @@ type_info* gc_type_store::get_class_type(class_type* cls) {
 	if (cls->owned_type) {
 		return cls->owned_type;
 	}
+
+	Lock mlock = lock();
 
 	class_type_info* type = (class_type_info*) malloc(sizeof(class_type_info));
 
@@ -161,7 +165,7 @@ class_type* gc_type_store::class_by_name(string class_name) {
 		}
 	}
 
-	cerr << "Class not found" << endl;
+	cerr << "Class " << class_name << " not found" << endl;
 	abort();
 }
 
@@ -172,7 +176,7 @@ const class_type* gc_type_store::class_by_name(string class_name) const {
 		}
 	}
 
-	cerr << "Class not found" << endl;
+	cerr << "Class " << class_name << " not found" << endl;
 	abort();
 }
 
@@ -209,4 +213,8 @@ void gc_type_store::log_headers() {
 		cout << "static_size=" << cls->static_size << endl;
 		cout << endl;
 	}
+}
+
+Lock gc_type_store::lock() {
+	return mutex.lock();
 }

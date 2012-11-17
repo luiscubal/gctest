@@ -95,7 +95,9 @@ thread_identifier start_thread(gc_context* context, void* data, thread_func func
 	start_info->func = func;
 	start_info->data = data;
 
-	return CreateThread(NULL, 0, thread_startup, start_info, 0, NULL);
+	HANDLE thread = CreateThread(NULL, 0, thread_startup, start_info, 0, NULL);
+
+	return thread;
 }
 
 vector<CONTEXT> stop_world(vector<thread_identifier>& threads) {
@@ -112,4 +114,12 @@ vector<CONTEXT> stop_world(vector<thread_identifier>& threads) {
 	}
 
 	return contexts;
+}
+
+void dereference_thread(thread_identifier thread) {
+	CloseHandle(thread);
+}
+
+void join_thread(thread_identifier thread) {
+	WaitForSingleObject(thread, INFINITE);
 }
