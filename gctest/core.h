@@ -6,16 +6,8 @@
 #include <string>
 #include <queue>
 #include <memory>
+#include "threading.h"
 #include "fast_bitset.h"
-#ifdef PLATFORM_X64
-#include "x86_64.h"
-#else
-#ifdef PLATFORM_X86
-#include "x86.h"
-#else
-#error "No platform defined"
-#endif
-#endif
 
 typedef uint8_t mark_id_t;
 typedef uint8_t fixed_count_t;
@@ -174,14 +166,17 @@ public:
 
 class gc_context {
 	std::unique_ptr<gc_type_store> type_store;
-	void* stack_start;
 	std::vector<gc_heap> heaps;
+	std::vector<thread_identifier> threads;
+	std::vector<void*> thread_stack_starts;
 	mark_id_t last_mark_id;
 	size_t last_alloc_heap;
 	char* first_heap;
 	char* last_heap;
+	Mutex mutex;
 
 	void mark();
+	void mark_thread_objects(std::queue<core_representation*>& pending_list);
 	void mark_conservative_region(uint32_t start, uint32_t end,
 			std::queue<core_representation*>& pending_list);
 	void mark(core_representation* object, std::queue<core_representation*>& pending_list);
@@ -192,8 +187,13 @@ class gc_context {
 	void mark_array(const type_info* content_type, core_representation* object,
 			std::queue<core_representation*>& pending_list);
 	void sweep();
+
+	//Tries to allocate, but does not trigger GC nor allocates new space
+	void* try_alloc(size_t size, bool is_gc_object);
+
+	void perform_gc();
 public:
-	gc_context(std::unique_ptr<gc_type_store> type_store, void* stack_start);
+	gc_context(std::unique_ptr<gc_type_store> type_store);
 
 	size_t count_heaps() { return heaps.size(); }
 	gc_heap* find_owner_heap(void* content_location, bool is_gc_object);
@@ -202,16 +202,18 @@ public:
 	core_representation* alloc_class(type_info* class_type);
 	array_representation* alloc_array(type_info* inner_type, size_t length);
 
-	//Tries to allocate, but does not trigger GC nor allocates new space
-	void* try_alloc(size_t size, bool is_gc_object);
-
 	void* alloc(size_t size, bool is_gc_object);
 
 	bool is_heap_object(void* obj) const;
 
 	void prepare_static_fields();
 
-	void perform_gc();
+	void force_gc();
+
+	Lock lock();
+
+	void declare_thread(thread_identifier thread, void* stack_start);
+	void forget_thread(thread_identifier thread);
 };
 
 #endif /* CORE_H_ */

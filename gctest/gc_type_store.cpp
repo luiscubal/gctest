@@ -95,6 +95,16 @@ size_t gc_type_store::full_compute_class_size(class_type* cls) {
 		}
 	}
 
+	for (method& method : cls->methods) {
+		if (!method.flags.is_virtual) {
+			continue;
+		}
+
+		size = align(size, sizeof(func_ptr));
+		method.virtual_offset = size;
+		size += sizeof(func_ptr);
+	}
+
 	return size;
 }
 
