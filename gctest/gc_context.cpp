@@ -14,9 +14,10 @@ using std::string;
 using std::malloc;
 using std::memset;
 using std::move;
+using std::unique_ptr;
 
-gc_context::gc_context(gc_type_store* type_store) :
-		type_store(type_store),
+gc_context::gc_context(unique_ptr<gc_type_store> type_store) :
+		type_store(move(type_store)),
 		last_mark_id(0),
 		last_alloc_heap(0),
 		first_heap((char*) UINTPTR_MAX),
@@ -210,49 +211,9 @@ void gc_context::mark_thread_objects(queue<core_representation*>& pending_list) 
 		mark_conservative_region(stack_pos, stack_begin, pending_list);
 
 		if (thread != current_thread) {
-			mark_registers(thread, pending_list);
+			//TODO: Mark registers too
 		}
 	}
-}
-
-void gc_context::mark_registers(thread_identifier thread, queue<core_representation*>& pending_list) {
-	CONTEXT context;
-	if (GetThreadContext(thread, &context) == 0) {
-		cerr << "Failed to get thread context" << endl;
-		abort();
-	}
-
-#ifdef PLATFORM_X64
-	pending_list.push((core_representation*) context.Rax);
-	pending_list.push((core_representation*) context.Rbx);
-	pending_list.push((core_representation*) context.Rcx);
-	pending_list.push((core_representation*) context.Rdx);
-	pending_list.push((core_representation*) context.Rbp);
-	pending_list.push((core_representation*) context.Rsp);
-	pending_list.push((core_representation*) context.Rdi);
-	pending_list.push((core_representation*) context.Rsi);
-	pending_list.push((core_representation*) context.R8);
-	pending_list.push((core_representation*) context.R9);
-	pending_list.push((core_representation*) context.R10);
-	pending_list.push((core_representation*) context.R11);
-	pending_list.push((core_representation*) context.R12);
-	pending_list.push((core_representation*) context.R13);
-	pending_list.push((core_representation*) context.R14);
-	pending_list.push((core_representation*) context.R15);
-#else
-#ifdef PLATFORM_X86
-	pending_list.push((core_representation*) context.Eax);
-	pending_list.push((core_representation*) context.Ebx);
-	pending_list.push((core_representation*) context.Ecx);
-	pending_list.push((core_representation*) context.Edx);
-	pending_list.push((core_representation*) context.Ebp);
-	pending_list.push((core_representation*) context.Esp);
-	pending_list.push((core_representation*) context.Edi);
-	pending_list.push((core_representation*) context.Esi);
-#else
-#error "Unrecognized platform"
-#endif
-#endif
 }
 
 void gc_context::mark_conservative_region(uint32_t start, uint32_t end,
@@ -393,6 +354,10 @@ void gc_context::prepare_static_fields() {
 			memset(cls->static_field_data, 0, cls->static_size);
 		}
 	}
+}
+
+Lock gc_context::lock() {
+	return mutex.lock();
 }
 
 void gc_context::declare_thread(thread_identifier thread, void* stack_start) {
