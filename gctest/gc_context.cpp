@@ -1,6 +1,5 @@
 #include "core.h"
 #include "utils.h"
-#include "platform.h"
 #include <iostream>
 #include <utility>
 #include <cstdlib>
@@ -16,8 +15,9 @@ using std::memset;
 using std::move;
 using std::unique_ptr;
 
-gc_context::gc_context(unique_ptr<gc_type_store> type_store) :
+gc_context::gc_context(unique_ptr<gc_type_store> type_store, void* stack_start) :
 		type_store(move(type_store)),
+		stack_start(stack_start),
 		last_mark_id(0),
 		last_alloc_heap(0),
 		first_heap((char*) UINTPTR_MAX),
@@ -76,7 +76,6 @@ void* gc_context::try_alloc(size_t size, bool is_gc_object) {
 }
 
 void* gc_context::alloc(size_t size, bool is_gc_object) {
-	Lock mlock = lock();
 	//cout << "alloc(" << size << ")" << endl;
 
 	void* chunk = try_alloc(size, is_gc_object);
@@ -116,17 +115,8 @@ void* gc_context::alloc(size_t size, bool is_gc_object) {
 }
 
 void gc_context::perform_gc() {
-	//TODO: Store context
-	stop_world(threads);
-
 	mark();
 	sweep();
-}
-
-void gc_context::force_gc() {
-	Lock mlock = lock();
-
-	perform_gc();
 }
 
 gc_heap* gc_context::find_owner_heap(void* obj, bool is_gc_object) {
@@ -162,11 +152,14 @@ bool gc_context::is_heap_object(void* obj) const {
 }
 
 void gc_context::mark() {
+	uintptr_t stack_pos = uintptr_t(get_stack_pointer());
 	++last_mark_id;
 
 	queue<core_representation*> objects_to_mark;
 
-	mark_thread_objects(objects_to_mark);
+	//Mark stack
+	//Note that stack_pos is the start because the stack grows downwards.
+	mark_conservative_region(stack_pos, uintptr_t(stack_start), objects_to_mark);
 
 	//Mark static fields
 	for (class_type* cls : type_store->class_types) {
@@ -185,8 +178,7 @@ void gc_context::mark() {
 
 				core_representation** reprptr = (core_representation**) ptr;
 				core_representation* repr = *reprptr;
-
-				mark(repr, objects_to_mark);
+				repr->last_mark = last_mark_id;
 			}
 		}
 	}
@@ -194,25 +186,6 @@ void gc_context::mark() {
 	while (!objects_to_mark.empty()) {
 		mark(objects_to_mark.front(), objects_to_mark);
 		objects_to_mark.pop();
-	}
-}
-
-void gc_context::mark_thread_objects(queue<core_representation*>& pending_list) {
-	thread_identifier current_thread = get_current_thread();
-	uintptr_t stack_pos = uintptr_t(get_stack_pointer());
-
-	for (size_t i = 0; i < threads.size(); ++i) {
-		thread_identifier thread = threads[i];
-		uintptr_t stack_begin = uintptr_t(thread_stack_starts[i]);
-
-		//On x86, the stack grows downwards
-		//so stack_pos < stack_begin
-		//For other platforms, this will have to be adjusted.
-		mark_conservative_region(stack_pos, stack_begin, pending_list);
-
-		if (thread != current_thread) {
-			//TODO: Mark registers too
-		}
 	}
 }
 
@@ -352,27 +325,6 @@ void gc_context::prepare_static_fields() {
 		if (cls->static_size > 0) {
 			cls->static_field_data = alloc(cls->static_size, false);
 			memset(cls->static_field_data, 0, cls->static_size);
-		}
-	}
-}
-
-Lock gc_context::lock() {
-	return mutex.lock();
-}
-
-void gc_context::declare_thread(thread_identifier thread, void* stack_start) {
-	threads.push_back(thread);
-	thread_stack_starts.push_back(stack_start);
-}
-
-void gc_context::forget_thread(thread_identifier thread) {
-	for (size_t i = 0; i < threads.size(); ++i) {
-		if (threads[i] == thread) {
-			//Found
-			threads.erase(threads.begin() + i);
-			thread_stack_starts.erase(thread_stack_starts.begin() + i);
-
-			return;
 		}
 	}
 }

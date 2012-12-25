@@ -7,13 +7,13 @@ using std::endl;
 
 gc_type_store* type_store;
 gc_context* ctx;
-class_type* cls_coreLink;
 
 void test_linked_list() {
-	type_info* cls_type = type_store->get_class_type(cls_coreLink);
-	const field& fprev = cls_coreLink->fields[0];
-	const field& fnext = cls_coreLink->fields[1];
-	const field& fval = cls_coreLink->fields[2];
+	class_type* cls = type_store->class_by_name("core.Link");
+	type_info* cls_type = type_store->get_class_type(cls);
+	const field& fprev = cls->fields[0];
+	const field& fnext = cls->fields[1];
+	const field& fval = cls->fields[2];
 
 	size_t oprev = fprev.field_offset;
 	size_t onext = fnext.field_offset;
@@ -113,13 +113,14 @@ void test_statics(bool check_old) {
 	*val = 123;
 }
 
-void run_main(void* args) {
+int main() {
+	type_store = new gc_type_store();
+	ctx = new gc_context(std::unique_ptr<gc_type_store>(type_store), get_stack_pointer());
 
 	class_type core_Link;
 	core_Link.full_name = "core.Link";
 	core_Link.base_type = 0;
 	core_Link.owned_type = nullptr;
-	cls_coreLink = &core_Link;
 	type_store->push_class_type(&core_Link);
 
 	field core_Link_prev;
@@ -167,13 +168,4 @@ void run_main(void* args) {
 
 	cout.flush();
 	cerr.flush();
-}
-
-int main() {
-	type_store = new gc_type_store();
-	ctx = new gc_context(std::unique_ptr<gc_type_store>(type_store));
-
-	declare_thread(ctx, NULL, run_main);
-
-	return 0;
 }
